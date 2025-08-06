@@ -1,0 +1,10 @@
+Row 0: The model predicts **NORMAL** with a probability of **0.05**.
+
+The following features helped predict a normal condition:
+1. **Motor_current** (value = 33.40) increased the model's prediction towards **risk of failure**.
+2. **COMP** (value = 0.00) decreased the model's prediction towards **chance of normal operation**.
+3. **MPG** (value = 3.60) increased the model's prediction towards **risk of failure**.
+4. **LPS** (value = 19.10) decreased the model's prediction towards **chance of normal operation**.
+5. **Oil_temperature** (value = 0.00) increased the model's prediction towards **risk of failure**.
+
+The feature **Motor_current** had the most significant influence. Its value (33.40) strongly indicates a **normal**.
