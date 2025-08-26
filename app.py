@@ -7,7 +7,7 @@ from explain_predictor import predict_with_explanation
 # Page config
 st.set_page_config(page_title="Machine Health Prediction", layout="wide")
 
-st.title("🛠️ Explainable Predictive Maintenance for Metro Train Compressor's Air Production Unit (APU)")
+st.title("🛠️ Explainable Predictive Maintenance for Smart Metro Train Compressor's Air Production Unit (APU)")
 
 # Image and Feature Legend side by side
 col_img, col_legend = st.columns([1, 2])
@@ -19,23 +19,27 @@ with col_img:
         st.warning("⚠️ 'machine.jpg' not found. Please add the image to the project directory.")
 
 with col_legend:
-    with st.expander("◽ Feature Legend: What Do the Terms Mean?", expanded=False):
+    with st.expander("◽ Feature Legend: Key Sensor Definitions", expanded=False):
         st.markdown("""
-        - **LPS**: Low-Pressure Sensor – Monitors air pressure in the low-pressure zone.  
-        - **MPG**: Main Pressure Gauge – Indicates main air pressure level.  
-        - **COMP**: Compressor – Reflects the compressor load or status.  
-        - **Motor_current**: Current drawn by the compressor motor.  
-        - **Oil_temperature**: Temperature of compressor oil.  
-        - **TP2**: Temperature Probe 2 – Measures temperature at a secondary point.  
-        - **TP3**: Temperature Probe 3 – Measures another temperature point.  
-        - **H1**: Humidity Sensor – Monitors air moisture content.  
-        - **DV_pressure**: Delivery Valve Pressure – Pressure at the delivery point.  
-        - **Reservoirs**: Air Reservoir Status – Level or pressure in air storage.  
-        - **DV_eletric**: Delivery Valve Electric Signal – Controls the valve.  
-        - **Towers**: Tower Fan or Dryer Activity – Cooling or drying component status.  
-        - **Pressure_switch**: Indicates whether the pressure switch is on/off.  
-        - **Oil_level**: Level of compressor oil.  
-        - **Caudal_impulses**: Flow rate pulses – Measures airflow rate.  
+        The following features were identified as **most influential** in the model's predictions:
+
+        - **DV_pressure (Differential Valve Pressure)** – Measures the pressure difference across the delivery valve.  
+        - **DV_eletric (Differential Valve Electric Status)** – Electrical signal status controlling the delivery valve.  
+        - **H1 (Cyclonic Separator Pressure Drop)** – Indicates moisture/contaminant resistance in the air stream.  
+        - **COMP (Compressor Status)** – Operational load/health of the compressor.  
+        - **MPG (Main Pressure Gauge)** – Represents system-wide main air pressure levels.  
+        - **TP2 (Compressor Pressure Sensor 2)** – Tracks secondary stage compressor pressure.  
+        - **TP3 (Compressor Pressure Sensor 3)** – Monitors tertiary stage compressor pressure.  
+        - **Oil_temperature (Compressor Oil Temperature)** – Ensures lubrication stability and overheating detection.  
+        - **Towers (Dryer/Tower Status)** – Reflects tower dryer load or regeneration status.  
+
+        Other available features:  
+        - **LPS (Low-Pressure Sensor)** – Air pressure in low-pressure zone.  
+        - **Reservoirs** – Storage reservoir air levels or pressure.  
+        - **Motor_current** – Current drawn by the compressor motor.  
+        - **Pressure_switch** – Indicates ON/OFF state of compressor pressure control.  
+        - **Oil_level** – Compressor oil level, ensuring lubrication is sufficient.  
+        - **Caudal_impulses** – Flow pulses representing airflow rate.  
         """)
 
 # Input sliders
@@ -80,7 +84,6 @@ with st.expander("⚙️ Show Sliders Panel", expanded=True):
         Towers = padded_slider_input("🗼 Towers", "Towers")                  
         Oil_level = padded_slider_input("🔧 Oil Level", "Oil_level")       
 
-
 # Prediction button
 if st.button("⚙️ Start Diagnostic Scan"):
     input_df = pd.DataFrame([{
@@ -116,7 +119,7 @@ if st.button("⚙️ Start Diagnostic Scan"):
         if line.strip():
             st.markdown(line.strip())
 
-    st.markdown("### ◽Feature Contribution (SHAP)")
+    st.markdown("### ◽ Feature Contribution (SHAP)")
     if os.path.exists(shap_image_path):
         st.image(shap_image_path, caption="Top 5 SHAP Features", use_container_width=True)
     else:
