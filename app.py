@@ -1,7 +1,6 @@
 import streamlit as st 
 import pandas as pd
 import os
-import pickle
 from explain_predictor import predict_with_explanation
 
 # Page config
@@ -64,7 +63,6 @@ def padded_slider_input(label, key_prefix, default=0.0):
 
 with st.expander("⚙️ Show Sliders Panel", expanded=True):
     col1, col2 = st.columns(2)
-
     with col1:
         LPS = padded_slider_input("🔧 LPS", "LPS")
         COMP = padded_slider_input("⚙️ COMP", "COMP")
@@ -74,7 +72,6 @@ with st.expander("⚙️ Show Sliders Panel", expanded=True):
         DV_eletric = padded_slider_input("⚡ DV Electric", "DV_eletric")
         Pressure_switch = padded_slider_input("🔌 Pressure Switch", "Pressure_switch")
         Caudal_impulses = padded_slider_input("🌀 Caudal Impulses", "Caudal_impulses")
-
     with col2:
         MPG = padded_slider_input("📄 MPG", "MPG")                            
         Motor_current = padded_slider_input("🔋 Motor Current", "Motor_current")  
@@ -87,20 +84,10 @@ with st.expander("⚙️ Show Sliders Panel", expanded=True):
 # Prediction button
 if st.button("⚙️ Start Diagnostic Scan"):
     input_df = pd.DataFrame([{
-        'LPS': LPS,
-        'MPG': MPG,
-        'COMP': COMP,
-        'Motor_current': Motor_current,
-        'Oil_temperature': Oil_temperature,
-        'TP2': TP2,
-        'TP3': TP3,
-        'H1': H1,
-        'DV_pressure': DV_pressure,
-        'Reservoirs': Reservoirs,
-        'DV_eletric': DV_eletric,
-        'Towers': Towers,
-        'Pressure_switch': Pressure_switch,
-        'Oil_level': Oil_level,
+        'LPS': LPS, 'MPG': MPG, 'COMP': COMP, 'Motor_current': Motor_current,
+        'Oil_temperature': Oil_temperature, 'TP2': TP2, 'TP3': TP3, 'H1': H1,
+        'DV_pressure': DV_pressure, 'Reservoirs': Reservoirs, 'DV_eletric': DV_eletric,
+        'Towers': Towers, 'Pressure_switch': Pressure_switch, 'Oil_level': Oil_level,
         'Caudal_impulses': Caudal_impulses
     }])
 
@@ -111,9 +98,8 @@ if st.button("⚙️ Start Diagnostic Scan"):
     pred_label = 'FAILURE' if prediction[0] == 1 else 'NORMAL'
     st.success(f"Prediction: {pred_label} (Probability: {float(probability[0]):.2f})")
 
-    # Clean explanation
+    # Show explanation
     explanation_text = explanation_text.split(":", 1)[1].strip() if explanation_text.startswith("Row 0:") else explanation_text
-
     st.markdown("### 🧠 Explanation of Prediction")
     for line in explanation_text.split("\n"):
         if line.strip():
