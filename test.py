@@ -22,7 +22,7 @@ dark_premium_css = """
 }
 
 .stApp {
-    background: linear-gradient(135deg, #4d4d4d 0%, #1a1a2e 50%, #16213e 100%);
+    background: linear-gradient(135deg, #0c0c0c 0%, #1a1a2e 50%, #16213e 100%);
     min-height: 100vh;
 }
 
@@ -417,7 +417,7 @@ with left_col:
     
     with col_img:
   
-        if os.path.exists("machine.jpg"):
+        if os.path.exists("maBchine.jpg"):
             st.image("machine.jpg", width=200)
         else:
             st.markdown("""
@@ -666,19 +666,41 @@ with right_col:
 
         # AI Explanation
         st.markdown('<div class="section-header">🧠 AI Analysis Explanation</div>', unsafe_allow_html=True)
-        
-        
-        
-       
         explanation_text = result['explanation_text']
         explanation_text = explanation_text.split(":", 1)[1].strip() if explanation_text.startswith("Row 0:") else explanation_text
-
+        
+       
         for line in explanation_text.split("\n"):
             if line.strip():
-                st.markdown(f"- {line.strip()}")
+                st.markdown(f"<div style='margin: 0.8rem 0; padding: 0.5rem; background: rgba(102, 126, 234, 0.1); border-left: 3px solid #667eea; border-radius: 5px;'>• {line.strip()}</div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-
-
+        # Key Sensor Values Summary
+        st.markdown('<div class="section-header">📋 Key Sensor Values at Analysis</div>', unsafe_allow_html=True)
+        
+        col_sens1, col_sens2 = st.columns(2)
+        
+        with col_sens1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #667eea;">🔧 Critical Systems</div>
+                <div style="margin: 0.3rem 0;">LPS: <strong>{result['sensor_values']['LPS']:.1f}</strong></div>
+                <div style="margin: 0.3rem 0;">COMP: <strong>{result['sensor_values']['COMP']:.1f}</strong></div>
+                <div style="margin: 0.3rem 0;">Oil Level: <strong>{result['sensor_values']['Oil_level']:.1f}</strong></div>
+                <div style="margin: 0.3rem 0;">Motor Current: <strong>{result['sensor_values']['Motor_current']:.1f}</strong></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with col_sens2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #764ba2;">🌡️ Monitoring Points</div>
+                <div style="margin: 0.3rem 0;">Oil Temp: <strong>{result['sensor_values']['Oil_temperature']:.1f}°</strong></div>
+                <div style="margin: 0.3rem 0;">TP2: <strong>{result['sensor_values']['TP2']:.1f}</strong></div>
+                <div style="margin: 0.3rem 0;">TP3: <strong>{result['sensor_values']['TP3']:.1f}</strong></div>
+                <div style="margin: 0.3rem 0;">DV Pressure: <strong>{result['sensor_values']['DV_pressure']:.1f}</strong></div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # SHAP Visualization
         st.markdown('<div class="section-header">📈 Feature Impact Analysis (SHAP)</div>', unsafe_allow_html=True)
