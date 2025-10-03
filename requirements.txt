@@ -6,3 +6,6 @@ scipy
 shap
 scikit-learn
 xgboost
+plotly
+Pillow
+fpdf
