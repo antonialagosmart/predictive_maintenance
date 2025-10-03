@@ -462,7 +462,7 @@ def predict_with_explanation(input_data: pd.DataFrame, output_dir="output"):
                    f'{val:.3f}', ha='left' if width >= 0 else 'right', va='center', fontsize=7)
         
         ax.set_xlabel("SHAP Impact Value\n(← Normal    Failure →)", fontsize=9)
-        ax.set_title("AI Model: Top 5 Most Influential Factors", fontsize=10, pad=15)
+        ax.set_title("Top 5 Most Influential Factors", fontsize=10, pad=15)
         ax.tick_params(axis='y', labelsize=8)
         ax.tick_params(axis='x', labelsize=8)
         ax.axvline(x=0, color='black', linestyle='-', alpha=0.3, linewidth=0.8)

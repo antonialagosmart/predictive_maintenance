@@ -1,898 +1,904 @@
 import streamlit as st 
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+import plotly.graph_objects as go
+import plotly.express as px
 from explain_predictor import predict_with_explanation, generate_detailed_report
+from data_explainability import SensorValidator
+from operational_monitor import OperationalMonitor
+from storage_manager import StorageManager
+from PIL import Image
+import json
+from fpdf import FPDF
+import base64
+from io import BytesIO
+import matplotlib.pyplot as plt
 
-# =========================
-# Page config with enhanced CSS
-# =========================
+
+def format_explanation_text(explanation_text: str) -> None:
+    """Format and display explanation text using Streamlit components"""
+    sections = explanation_text.split('\n\n')
+    
+    for section in sections:
+        if not section.strip():
+            continue
+            
+        if "The AI model predicts" in section:
+            pred_type = "NORMAL" if "NORMAL" in section else "FAILURE"
+            confidence = section.split("confidence of")[1].strip().rstrip(".")
+            
+            # Use st.container for prediction header
+            with st.container():
+                color = "rgb(16, 185, 129)" if pred_type == "NORMAL" else "rgb(239, 68, 68)"
+                st.markdown(
+                    f"""
+                    <div style='background: linear-gradient(145deg, {color}22, {color}44);
+                             border: 2px solid {color};
+                             border-radius: 15px;
+                             padding: 20px;
+                             margin-bottom: 20px;'>
+                        <h2 style='color: {color}; margin: 0; font-size: 24px;'>
+                            🤖 AI Prediction: {pred_type}
+                        </h2>
+                        <p style='color: #94a3b8; margin: 10px 0 0 0;'>
+                            Model Confidence: {confidence}
+                        </p>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+            
+        elif "DETAILED SENSOR ANALYSIS" in section:
+            st.subheader("🔍 DETAILED SENSOR ANALYSIS")
+            
+        elif section.startswith(("1.", "2.", "3.", "4.", "5.")):
+            # Parse sensor reading and impact
+            if "Impact:" in section:
+                reading, impact = section.split("Impact:")
+                sensor_num = reading.split(".")[0]
+                
+                # Create expandable section for each sensor
+                with st.expander(f"Sensor {sensor_num} Analysis", expanded=True):
+                    st.markdown(reading.split(".", 1)[1].strip())
+                    
+                    # Color-code impact based on content
+                    impact = impact.strip()
+                    if "NORMAL" in impact:
+                        st.success(f"**Impact:** {impact}")
+                    else:
+                        st.error(f"**Impact:** {impact}")
+            
+        elif "PRIMARY FACTOR" in section:
+            st.subheader("📈 PRIMARY FACTOR")
+            st.info(section.replace("PRIMARY FACTOR", "").strip())
+            
+        elif "MAINTENANCE RECOMMENDATIONS" in section:
+            st.subheader("🛠️ MAINTENANCE RECOMMENDATIONS")
+            recommendations = section.replace("MAINTENANCE RECOMMENDATIONS", "").strip().split('\n')
+            
+            for rec in recommendations:
+                if rec.strip():
+                    if rec.startswith("✅"):
+                        st.success(rec)
+                    elif rec.startswith("⚠️"):
+                        st.warning(rec)
+                    elif rec.startswith("OPTIMAL"):
+                        st.info(f"✨ {rec}")
+                    elif rec.startswith("MONITOR"):
+                        st.warning(f"⚠️ {rec}")
+                    else:
+                        st.markdown(rec)
+
+
+# Initialize managers
+if 'storage_manager' not in st.session_state:
+    st.session_state.storage_manager = StorageManager()
+if 'operational_monitor' not in st.session_state:
+    st.session_state.operational_monitor = OperationalMonitor()
+if 'sensor_validator' not in st.session_state:
+    st.session_state.sensor_validator = SensorValidator()
+if 'prediction_result' not in st.session_state:
+    st.session_state.prediction_result = None
+if 'prediction_made' not in st.session_state:
+    st.session_state.prediction_made = False
+if 'machine_status' not in st.session_state:
+    st.session_state.machine_status = 'ACTIVE'
+
+# Page config
 st.set_page_config(
-    page_title="APU Health Monitor",
+    page_title="APU Health Monitor Pro",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
-# Enhanced Dark Mode CSS for premium look
+# Enhanced CSS (keeping your existing styles)
 dark_premium_css = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-* {
-    font-family: 'Inter', sans-serif;
-}
+* { font-family: 'Inter', sans-serif; }
 
 .stApp {
     background: linear-gradient(135deg, #4d4d4d 0%, #1a1a2e 50%, #16213e 100%);
     min-height: 100vh;
 }
 
-.main {
-    background: transparent;
-}
-
-.block-container {
-    padding: 2rem 1rem;
-    max-width: 1400px;
-}
-
-/* Header Styling */
+/* All your existing CSS styles remain the same */
 .main-header {
     background: rgba(15, 15, 35, 0.95);
     backdrop-filter: blur(20px);
     border-radius: 25px;
     padding: 2.5rem;
     margin-bottom: 2rem;
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.1);
     text-align: center;
-    position: relative;
-    overflow: hidden;
 }
 
-.main-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
-    z-index: -1;
-}
-
-.main-header h1 {
-    background: linear-gradient(135deg, #667eea, #764ba2, #ff6b6b);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    margin: 0;
-    font-size: 2.8rem;
-    font-weight: 700;
-    text-shadow: 0 0 30px rgba(102, 126, 234, 0.3);
-}
-
-.main-header .subtitle {
-    color: #a0a0b0;
-    margin-top: 0.8rem;
-    font-size: 1.2rem;
-    font-weight: 400;
-    opacity: 0.9;
-}
-
-/* Card Styling */
-.card {
-    background: rgba(20, 20, 40, 0.95);
-    backdrop-filter: blur(20px);
-    border-radius: 20px;
-    padding: 2rem;
-    margin-bottom: 1.5rem;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: all 0.3s ease;
-}
-
-.card:hover {
-    transform: translateY(-8px);
-    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(102, 126, 234, 0.3);
-    border: 1px solid rgba(102, 126, 234, 0.3);
-}
-
-/* Panel Styling */
-.sensor-panel {
-    background: rgba(15, 15, 35, 0.95);
-    backdrop-filter: blur(20px);
-    border-radius: 25px;
-    padding: 2.5rem;
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    height: fit-content;
-}
-
-.results-panel {
-    background: rgba(15, 15, 35, 0.95);
-    backdrop-filter: blur(20px);
-    border-radius: 25px;
-    padding: 2.5rem;
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    min-height: 500px;
-}
-
-/* Status Cards */
-.status-normal {
-    background: linear-gradient(135deg, #00b894, #00cec9);
-    color: white;
-    border-radius: 20px;
-    padding: 2.5rem;
-    text-align: center;
-    margin-bottom: 2rem;
-    border: 1px solid rgba(0, 184, 148, 0.3);
-}
-
-.status-failure {
-    background: linear-gradient(135deg, #e17055, #d63031);
-    color: white;
-    border-radius: 20px;
-    padding: 2.5rem;
-    text-align: center;
-    margin-bottom: 2rem;
-    border: 1px solid rgba(225, 112, 85, 0.3);
-}
-
-.status-waiting {
-    background: linear-gradient(135deg, #fdcb6e, #e17055);
-    color: white;
-    border-radius: 20px;
-    padding: 2.5rem;
-    text-align: center;
-    margin-bottom: 2rem;
-    border: 1px solid rgba(253, 203, 110, 0.3);
-}
-
-/* Button Styling */
-.stButton > button {
-    background: linear-gradient(135deg, #667eea, #764ba2) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 50px !important;
-    padding: 1.2rem 3rem !important;
-    font-size: 1.1rem !important;
-    font-weight: 600 !important;
-    transition: all 0.3s ease !important;
-    box-shadow: 0 15px 35px rgba(102, 126, 234, 0.4) !important;
-    width: 100% !important;
-    text-transform: uppercase !important;
-    letter-spacing: 1px !important;
-}
-
-.stButton > button:hover {
-    transform: translateY(-5px) !important;
-    box-shadow: 0 20px 40px rgba(102, 126, 234, 0.6) !important;
-    background: linear-gradient(135deg, #764ba2, #667eea) !important;
-}
-
-/* Toggle Switch Styling */
-.stCheckbox > label {
-    background: rgba(30, 30, 60, 0.8) !important;
-    border-radius: 25px !important;
-    padding: 0.8rem 1.5rem !important;
-    margin: 0.3rem 0 !important;
-    border: 1px solid rgba(102, 126, 234, 0.3) !important;
-    color: #e0e0e0 !important;
-    font-weight: 500 !important;
-    transition: all 0.3s ease !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 0.5rem !important;
-}
-
-.stCheckbox > label:hover {
-    background: rgba(40, 40, 70, 0.9) !important;
-    border: 1px solid rgba(102, 126, 234, 0.5) !important;
-    transform: translateY(-2px) !important;
-}
-
-.stCheckbox input[type="checkbox"]:checked + label {
-    background: linear-gradient(135deg, #667eea, #764ba2) !important;
-    border: 1px solid rgba(102, 126, 234, 0.8) !important;
-    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4) !important;
-}
-
-/* Input Toggle Styling */
-.input-toggle {
-    background: rgba(30, 30, 60, 0.8);
-    border-radius: 15px;
-    padding: 1rem;
-    margin-bottom: 1.5rem;
-    border: 1px solid rgba(102, 126, 234, 0.3);
-}
-
-.input-toggle .stRadio > div {
-    flex-direction: row !important;
-    gap: 2rem !important;
-}
-
-.input-toggle .stRadio label {
-    color: #e0e0e0 !important;
-    font-weight: 500 !important;
-}
-
-/* Slider Styling */
-.stSlider > div > div > div {
-    height: 6px !important;
-}
-
-.stSlider > div > div > div > div {
-    background: white !important;
-    box-shadow: 0 0 15px rgba(102, 126, 234, 0.5) !important;
-    width: 20px !important;
-    height: 20px !important;
-}
-
-.stSlider label {
-    color: #e0e0e0 !important;
-    font-weight: 500 !important;
-}
-
-/* Number Input Styling */
-.stNumberInput > div > div > input {
-    background: rgba(30, 30, 60, 0.8) !important;
-    border: 1px solid rgba(102, 126, 234, 0.3) !important;
-    border-radius: 10px !important;
-    color: #e0e0e0 !important;
-    padding: 0.8rem !important;
-}
-
-.stNumberInput label {
-    color: #e0e0e0 !important;
-    font-weight: 500 !important;
-}
-
-/* Expander Styling */
-.streamlit-expanderHeader {
-    background: rgba(102, 126, 234, 0.2) !important;
-    border-radius: 15px !important;
-    font-weight: 600 !important;
-    color: #e0e0e0 !important;
-    border: 1px solid rgba(102, 126, 234, 0.3) !important;
-}
-
-.streamlit-expanderContent {
-    background: rgba(20, 20, 40, 0.9) !important;
-    border-radius: 0 0 15px 15px !important;
-    border: 1px solid rgba(102, 126, 234, 0.3) !important;
-    border-top: none !important;
-}
-
-/* Legend Styling - More Compact */
-.legend-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.4rem;
-    font-size: 0.85rem;
-}
-
-.legend-item {
-    background: rgba(30, 30, 60, 0.6);
-    padding: 0.4rem 0.6rem;
-    border-radius: 6px;
-    border: 1px solid rgba(102, 126, 234, 0.2);
+.section-header {
     color: #e0e0e0;
-}
-
-.legend-item strong {
-    color: #667eea;
-}
-
-/* Sensor Section Styling */
-.sensor-section {
-    background: rgba(25, 25, 50, 0.8);
-    border-radius: 15px;
-    padding: 1.5rem;
+    font-weight: 600;
+    font-size: 1.4rem;
     margin-bottom: 1.5rem;
-    border: 1px solid rgba(102, 126, 234, 0.2);
 }
 
-.sensor-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-    margin-top: 1rem;
+.alert-critical {
+    background: rgba(231, 76, 60, 0.2);
+    border-left: 4px solid #e74c3c;
+    padding: 1rem;
+    border-radius: 10px;
+    margin: 0.5rem 0;
+    color: #ffe8e8;
 }
 
-/* Metric Cards */
+.alert-warning {
+    background: rgba(253, 203, 110, 0.2);
+    border-left: 4px solid #fdcb6e;
+    padding: 1rem;
+    border-radius: 10px;
+    margin: 0.5rem 0;
+    color: #fff3cd;
+}
+
+.alert-normal {
+    background: rgba(0, 184, 148, 0.2);
+    border-left: 4px solid #00b894;
+    padding: 1rem;
+    border-radius: 10px;
+    margin: 0.5rem 0;
+    color: #d4f5e9;
+}
+
 .metric-card {
     background: rgba(30, 30, 60, 0.9);
     border-radius: 18px;
-    padding: 2rem;
+    padding: 1.5rem;
     margin: 1rem 0;
     border-left: 4px solid #667eea;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(102, 126, 234, 0.2);
     color: #e0e0e0;
-    transition: all 0.3s ease;
 }
 
-.metric-card:hover {
-    transform: translateX(10px);
-    border-left: 4px solid #764ba2;
-    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(118, 75, 162, 0.3);
-}
-
-/* Digital Sensor Styling */
-.digital-sensor {
-    background: rgba(30, 30, 60, 0.9);
-    border-radius: 15px;
-    padding: 1rem;
-    margin: 0.5rem 0;
-    border: 1px solid rgba(102, 126, 234, 0.3);
-}
-
-.digital-sensor.active {
-    background: linear-gradient(135deg, rgba(0, 184, 148, 0.2), rgba(0, 206, 201, 0.2));
-    border: 1px solid rgba(0, 184, 148, 0.5);
-}
-
-/* Section Headers */
-.section-header {
-    color: #e0e0e0 !important;
+.stButton > button {
+    background: linear-gradient(135deg, #667eea, #764ba2) !important;
+    color: white !important;
+    border-radius: 50px !important;
+    padding: 1rem 2rem !important;
     font-weight: 600 !important;
-    font-size: 1.4rem !important;
-    margin-bottom: 1.5rem !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 0.8rem !important;
-    text-shadow: 0 0 10px rgba(102, 126, 234, 0.3) !important;
-}
-
-/* APU Status Indicator */
-.apu-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.8rem;
-    padding: 0.8rem 1.5rem;
-    border-radius: 25px;
-    font-weight: 600;
-    font-size: 1rem;
-    margin-left: 1rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-.apu-active {
-    background: rgba(0, 184, 148, 0.2);
-    color: #00b894;
-    border: 2px solid rgba(0, 184, 148, 0.5);
-    box-shadow: 0 0 20px rgba(0, 184, 148, 0.3);
-}
-
-.apu-standby {
-    background: rgba(253, 203, 110, 0.2);
-    color: #fdcb6e;
-    border: 2px solid rgba(253, 203, 110, 0.5);
-    box-shadow: 0 0 20px rgba(253, 203, 110, 0.3);
-}
-
-.apu-offline {
-    background: rgba(225, 112, 85, 0.2);
-    color: #e17055;
-    border: 2px solid rgba(225, 112, 85, 0.5);
-    box-shadow: 0 0 20px rgba(225, 112, 85, 0.3);
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-    .main-header h1 {
-        font-size: 2.2rem;
-    }
-    
-    .block-container {
-        padding: 1rem 0.5rem;
-    }
-    
-    .sensor-panel, .results-panel {
-        padding: 1.5rem;
-    }
-    
-    .sensor-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .legend-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
-/* Scrollbar Styling */
-::-webkit-scrollbar {
-    width: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: rgba(20, 20, 40, 0.5);
-    border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-    background: linear-gradient(135deg, #667eea, #764ba2);
-    border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(135deg, #764ba2, #667eea);
+    width: 100% !important;
 }
 </style>
 """
 
 st.markdown(dark_premium_css, unsafe_allow_html=True)
 
-# =========================
-# Header Section
-# =========================
+# Header
+# Header
+# Header with conditional image or fallback
+# Header with image and text side by side
 st.markdown("""
-<div class="main-header" style="margin-top: 2rem;">
-    <h1>🚇 Metro Train APU Health Monitor</h1>
-    <div class="subtitle">Advanced AI-Powered Compressor Diagnostics & Predictive Maintenance System</div>
-</div>
+<style>
+.header-container {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background: rgba(15, 15, 35, 0.95);
+    backdrop-filter: blur(20px);
+    border-radius: 25px;
+    padding: 2.5rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.header-image {
+    flex: 0 0 120px;
+    text-align: center;
+}
+.header-text {
+    flex: 1;
+}
+.header-text h1 {
+    margin: 0;
+    color: white;
+}
+.subtitle {
+    color: #94a3b8;
+    margin-top: 0.5rem;
+}
+</style>
 """, unsafe_allow_html=True)
 
-# =========================
-# Main Layout: Sensors (Left) + Results (Right)
-# =========================
-left_col, right_col = st.columns([1.1, 0.9], gap="large")
+# Create a container for both image and text
+col1, col2 = st.columns([1, 4])
 
-# Initialize session state for prediction results
-if 'prediction_made' not in st.session_state:
-    st.session_state.prediction_made = False
-    st.session_state.prediction_result = None
+with col1:
+    # Image component
+    if os.path.exists("machine.jpg"):
+        try:
+            image = Image.open("machine.jpg")
+            st.image(image, width=120, caption="APU Unit")
+        except Exception as e:
+            print(f"Error loading image: {e}")
+            st.markdown("🚇", unsafe_allow_html=True)
+    else:
+        st.markdown("🚇", unsafe_allow_html=True)
 
-with left_col:
-    # =========================
-    # APU Status and Image Section
-    # =========================
-    
-    # APU Status indicator (simulated based on sensor values)
-    col_img, col_status = st.columns([1, 1.2])
-    
-    with col_img:
-        if os.path.exists("machine.jpg"):
-            st.image("machine.jpg", width=200)
-        else:
-            st.markdown("""
-            <div style="background: linear-gradient(135deg, #30306080, #40407080); height: 200px; display: flex; align-items: center; justify-content: center; border-radius: 15px; color: #a0a0b0; border: 2px dashed rgba(102, 126, 234, 0.3);">
-                <div style="text-align: center;">
-                    <div style="font-size: 3rem; margin-bottom: 0.5rem;">🚇</div>
-                    <div><strong>APU Unit</strong></div>
-                    <small style="opacity: 0.7;"></small>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    with col_status:
-        # Calculate overall system health from sensor values (simplified)
-        if 'sensor_sum' not in st.session_state:
-            st.session_state.sensor_sum = 0
-        
-        # More sophisticated status logic
-        if st.session_state.sensor_sum > 50:
-            apu_status = "ACTIVE"
-            status_class = "apu-active"
-            status_emoji = "🟢"
-        elif st.session_state.sensor_sum > 20:
-            apu_status = "STANDBY"
-            status_class = "apu-standby"
-            status_emoji = "🟡"
-        else:
-            apu_status = "OFFLINE"
-            status_class = "apu-offline"
-            status_emoji = "🔴"
-        
-        st.markdown(f"""
-        <div class="section-header">
-            🔧 APU Status 
-            <span class="apu-status {status_class}">
-                {status_emoji} {apu_status}
-            </span>
+with col2:
+    # Header text component
+    st.markdown("""
+        <div class="header-text">
+            <h1>Metro Train APU Monitor</h1>
+            <div class="subtitle">Advanced IOT-ML Diagnostics with Real-Time Explainability & Trend Analysis</div>
         </div>
-        """, unsafe_allow_html=True)
-        
-        # System metrics
-        st.markdown(f"""
-        <div style="color: #a0a0b0; margin-top: 1rem;">
-            <div style="margin: 0.5rem 0;"><strong>System Activity:</strong> {st.session_state.sensor_sum:.1f}/100</div>
-            <div style="margin: 0.5rem 0;"><strong>Health Score:</strong> {(st.session_state.sensor_sum/100*100):.1f}%</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Compact Legend
-        with st.expander("📋 Sensor Reference Guide", expanded=False):
-            sensors_info = [
-                ("TP2", "Compressor pressure (bar)"),
-                ("TP3", "Pneumatic panel pressure (bar)"),
-                ("H1", "Separator pressure drop (bar)"),
-                ("DV_pressure", "Towers discharge drop (bar)"),
-                ("Reservoirs", "Downstream pressure (bar)"),
-                ("Oil_temperature", "Oil temperature (°C)"),
-                ("Motor_current", "Motor phase current (A)"),
-                ("COMP", "Air intake valve"),
-                ("DV_eletric", "Compressor outlet valve"),
-                ("Towers", "Tower operation selector"),
-                ("MPG", "Compressor start signal"),
-                ("LPS", "Low pressure sensor"),
-                ("Pressure_switch", "Towers discharge detector"),
-                ("Oil_level", "Oil level detector"),
-                ("Caudal_impulses", "Air flow pulse counter")
-            ]
-            
-            st.markdown('<div class="legend-grid">', unsafe_allow_html=True)
-            for sensor, description in sensors_info:
-                sensor_type = "🔢" if sensor in ["COMP", "DV_eletric", "Towers", "MPG", "LPS", "Pressure_switch", "Oil_level", "Caudal_impulses"] else "📊"
-                st.markdown(f'<div class="legend-item">{sensor_type} <strong>{sensor}:</strong> {description}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-    # =========================
-    # Input Method Toggle
-    # =========================
-    st.markdown('<div class="section-header">⚡ Sensor Configuration Panel</div>', unsafe_allow_html=True)
+
+# ========== SIDEBAR: Role Selection & Navigation ==========
+with st.sidebar:
+    st.markdown("### 👤 User Role Selection")
+    role = st.selectbox(
+        "Select your role:",
+        ["plant_manager", "maintenance_engineer", "ml_engineer"],
+        format_func=lambda x: {
+            "plant_manager": "🏭 Plant Manager",
+            "maintenance_engineer": "🔧 Maintenance Engineer",
+            "ml_engineer": "🤖 ML Engineer"
+        }[x]
+    )
     
-    input_method = st.radio(
-        "🎛️ Input Method:",
-        ["🎚️ Sliders/Switches", "⌨️ Number Input"],
-        horizontal=True,
-        key="input_method"
+    st.markdown("---")
+    st.markdown("### 📊 Navigation")
+    page = st.radio(
+        "Select view:",
+        ["Live Diagnostics", "Trend Analysis"],
+        label_visibility="collapsed"
+    )
+    
+    st.markdown("---")
+    st.markdown("### ℹ️ Role Information")
+    role_info = {
+        "plant_manager": "**Plant Manager View**\n\nHigh-level operational insights, business impact assessment, and actionable recommendations for production decisions.",
+        "maintenance_engineer": "**Maintenance Engineer View**\n\nDetailed technical diagnostics, sensor-level analysis, and specific maintenance procedures for equipment care.",
+        "ml_engineer": "**ML Engineer View**\n\nModel performance metrics, data quality assessment, concept drift detection, and system monitoring insights."
+    }
+    st.info(role_info[role])
+
+# ========== PAGE 1: LIVE DIAGNOSTICS ==========
+if page == "Live Diagnostics":
+    # Machine Status Display (Add this at the top of the page)
+    machine_status = st.session_state.get('machine_status', 'ACTIVE')
+    status_colors = {
+        'ACTIVE': '#00b894',
+        'OFFLINE': '#e74c3c',
+        'MAINTENANCE': '#fdcb6e',
+        'STANDBY': '#0984e3'
+    }
+    st.markdown(f"""
+        <div style="position: absolute; top: 10px; right: 20px; padding: 10px 20px; 
+                    background: rgba(0,0,0,0.2); border-radius: 50px; border: 2px solid {status_colors[machine_status]}">
+            <span style="color: {status_colors[machine_status]}; font-weight: bold;">● {machine_status}</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Add template download button
+    st.markdown("### 📥 Data Templates")
+    template_data = {
+        'timestamp': ['2024-02-20 09:00:00', '2024-02-20 09:15:00'],
+        'TP2': [7.5, 7.8],
+        'TP3': [8.0, 8.2],
+        'H1': [0.5, 0.6],
+        'DV_pressure': [1.0, 1.1],
+        'Reservoirs': [8.1, 8.3],
+        'Oil_temperature': [55, 56],
+        'Motor_current': [4.5, 4.6],
+        'COMP': [0, 0],
+        'DV_eletric': [1, 1],
+        'Towers': [0, 1],
+        'MPG': [0, 0],
+        'LPS': [0, 0],
+        'Pressure_switch': [0, 0],
+        'Oil_level': [0, 0],
+        'Caudal_impulses': [1, 1]
+    }
+    template_df = pd.DataFrame(template_data)
+    template_csv = template_df.to_csv(index=False)
+    st.download_button(
+        "📥 Download Template CSV",
+        template_csv,
+        "apu_readings_template.csv",
+        "text/csv",
+        key='download-template'
     )
 
-    # =========================
-    # Sensor Input Panel - Better Grouped
-    # =========================
-    
-    # Define all sensor configurations
-    analog_sensors = [
-        ("TP2", "📊 TP2 (bar)", -0.1, 10.0, 0.0),
-        ("TP3", "📊 TP3 (bar)", 0.0, 15.0, 9.0),
-        ("H1", "📊 H1 (bar)", -0.1, 10.0, 0.0),
-        ("DV_pressure", "📊 DV Pressure (bar)", -0.1, 3.0, 0.0),
-        ("Reservoirs", "📊 Reservoirs (bar)", 0.0, 15.0, 9.0),
-        ("Oil_temperature", "📊 Oil Temperature (°C)", 20.0, 80.0, 53.0),
-        ("Motor_current", "📊 Motor Current (A)", 0.0, 10.0, 4.0)
-    ]
-    
-    digital_sensors = [
-        ("COMP", "🔢 COMP", "Air intake valve active"),
-        ("DV_eletric", "🔢 DV Electric", "Outlet valve active"),
-        ("Towers", "🔢 Towers", "Tower 2 in operation"),
-        ("MPG", "🔢 MPG", "Compressor start signal"),
-        ("LPS", "🔢 LPS", "Low pressure detected"),
-        ("Pressure_switch", "🔢 Pressure Switch", "Tower discharge detected"),
-        ("Oil_level", "🔢 Oil Level", "Low oil level detected"),
-        ("Caudal_impulses", "🔢 Caudal Impulses", "Air flow detected")
-    ]
-    
-    sensor_values = {}
-    
-    # Analog Sensors Section
-    st.markdown("""
-    <div class="sensor-section">
-        <div class="section-header" style="font-size: 1.2rem; margin-bottom: 1rem;">📊 Analog Sensors</div>
-    """, unsafe_allow_html=True)
-    
-    # Create grid for analog sensors
-    analog_col1, analog_col2 = st.columns(2)
-    for i, (sensor_key, label, min_val, max_val, default) in enumerate(analog_sensors):
-        col = analog_col1 if i % 2 == 0 else analog_col2
-        with col:
-            if input_method == "🎚️ Sliders/Switches":
-                sensor_values[sensor_key] = st.slider(
-                    label, 
-                    min_val, 
-                    max_val, 
-                    default, 
-                    0.01 if max_val <= 1 else 0.1, 
-                    key=f"{sensor_key}_slider"
-                )
-            else:
-                sensor_values[sensor_key] = st.number_input(
-                    label, 
-                    min_val, 
-                    max_val, 
-                    default, 
-                    0.01 if max_val <= 1 else 0.1, 
-                    key=f"{sensor_key}_input"
-                )
-    
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Digital Sensors Section
-    st.markdown("""
-    <div class="sensor-section">
-        <div class="section-header" style="font-size: 1.2rem; margin-bottom: 1rem;">🔢 Digital Sensors</div>
-    """, unsafe_allow_html=True)
-    
-    # Create grid for digital sensors
-    digital_col1, digital_col2 = st.columns(2)
-    for i, (sensor_key, label, description) in enumerate(digital_sensors):
-        col = digital_col1 if i % 2 == 0 else digital_col2
-        with col:
-            if input_method == "🎚️ Sliders/Switches":
-                sensor_values[sensor_key] = 1 if st.checkbox(
-                    f"{label}: {description}", 
-                    key=f"{sensor_key}_switch"
-                ) else 0
-            else:
-                sensor_values[sensor_key] = st.selectbox(
-                    f"{label}: {description}",
-                    options=[0, 1],
-                    index=0,
-                    key=f"{sensor_key}_select"
-                )
-    
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Update sensor sum for APU status (only analog sensors for meaningful sum)
-    analog_sum = sum([
-        sensor_values.get('TP2', 0),
-        sensor_values.get('TP3', 0),
-        sensor_values.get('H1', 0),
-        sensor_values.get('Reservoirs', 0),
-        sensor_values.get('Oil_temperature', 0),
-        sensor_values.get('Motor_current', 0)
-    ])
-    digital_sum = sum([
-        sensor_values.get('COMP', 0),
-        sensor_values.get('DV_eletric', 0),
-        sensor_values.get('Towers', 0),
-        sensor_values.get('MPG', 0),
-        sensor_values.get('LPS', 0),
-        sensor_values.get('Pressure_switch', 0),
-        sensor_values.get('Oil_level', 0),
-        sensor_values.get('Caudal_impulses', 0)
-    ])
-    
-    st.session_state.sensor_sum = analog_sum + digital_sum * 5  # Weight digital sensors
-    
-    # Diagnostic Button
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🔍 Run Advanced Diagnostic Analysis", use_container_width=True, type="primary"):
-        # Create input dataframe with correct column order matching your dataset
-        input_df = pd.DataFrame([{
-            'TP2': sensor_values.get('TP2', 0),
-            'TP3': sensor_values.get('TP3', 0), 
-            'H1': sensor_values.get('H1', 0),
-            'DV_pressure': sensor_values.get('DV_pressure', 0),
-            'Reservoirs': sensor_values.get('Reservoirs', 0),
-            'Oil_temperature': sensor_values.get('Oil_temperature', 0),
-            'Motor_current': sensor_values.get('Motor_current', 0),
-            'COMP': sensor_values.get('COMP', 0),
-            'DV_eletric': sensor_values.get('DV_eletric', 0),
-            'Towers': sensor_values.get('Towers', 0),
-            'MPG': sensor_values.get('MPG', 0),
-            'LPS': sensor_values.get('LPS', 0),
-            'Pressure_switch': sensor_values.get('Pressure_switch', 0),
-            'Oil_level': sensor_values.get('Oil_level', 0),
-            'Caudal_impulses': sensor_values.get('Caudal_impulses', 0)
-        }])
-
-        with st.spinner("🔬 Analyzing sensor data and running AI diagnostics..."):
-            try:
-                prediction, probability, explanations = predict_with_explanation(input_df)
-                explanation_text, shap_image_path = explanations[0]
-                pred_label = 'FAILURE' if prediction[0] == 1 else 'NORMAL'
+    # Add file upload
+    uploaded_file = st.file_uploader("📤 Upload Readings CSV", type=['csv'])
+    if uploaded_file:
+        try:
+            input_df = pd.read_csv(uploaded_file)
+            st.success("✅ File uploaded successfully!")
+            st.dataframe(input_df.head())
+            
+            if st.button("🔍 Analyze Uploaded Data"):
+                results = []
+                progress_bar = st.progress(0)
                 
-                st.session_state.prediction_made = True
-                st.session_state.prediction_result = {
-                    'pred_label': pred_label,
-                    'probability': probability,
-                    'explanation_text': explanation_text,
-                    'shap_image_path': shap_image_path,
-                    'input_data': input_df,
-                    'sensor_values': sensor_values
+                with st.spinner("Processing readings..."):
+                    for idx, row in input_df.iterrows():
+                        sensor_values = row.to_dict()
+                        if 'timestamp' in sensor_values:
+                            timestamp = sensor_values.pop('timestamp')
+                        else:
+                            timestamp = datetime.now().isoformat()
+                        
+                        # Get data quality report
+                        quality_report = st.session_state.sensor_validator.generate_data_quality_report(
+                            sensor_values, role)
+                        
+                        # Make prediction
+                        prediction, probability, explanations = predict_with_explanation(pd.DataFrame([sensor_values]))
+                        explanation_text, shap_image_path = explanations[0]
+                        
+                        # Store results (convert numpy types to Python types)
+                        result = {
+                            'timestamp': timestamp,
+                            'prediction': int(prediction[0]),  # Convert to regular int
+                            'probability': float(probability[0]),  # Convert to regular float
+                            'sensor_values': sensor_values,
+                            'data_quality_score': float(quality_report['data_quality_score']),  # Convert to regular float
+                            'quality_factors': quality_report['quality_factors'],
+                            'explanation_text': explanation_text
+                        }
+                        results.append(result)
+                        
+                        # Save to storage manager
+                        st.session_state.storage_manager.save_prediction(result)
+                        
+                        # Update progress
+                        progress_bar.progress((idx + 1) / len(input_df))
+                
+                # Show summary
+                st.success(f"✅ Processed {len(results)} readings")
+                
+                # Display results summary
+                df_results = pd.DataFrame([{
+                    'timestamp': r['timestamp'],
+                    'prediction': r['prediction'],
+                    'probability': r['probability'],
+                    'data_quality_score': r['data_quality_score']
+                } for r in results])
+                
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    failures = len(df_results[df_results['prediction'] == 1])
+                    st.metric("Failures Detected", failures)
+                with col2:
+                    avg_quality = df_results['data_quality_score'].mean()
+                    st.metric("Avg Data Quality", f"{avg_quality:.1f}")
+                with col3:
+                    avg_prob = df_results['probability'].mean()
+                    st.metric("Avg Confidence", f"{avg_prob:.1%}")
+                
+                # Common data quality factors
+                st.markdown("### 📊 Data Quality Analysis")
+                quality_counts = {}
+                for result in results:
+                    for factor in result.get('quality_factors', []):
+                        key = f"{factor['sensor']}: {factor['reason']}"
+                        quality_counts[key] = quality_counts.get(key, 0) + 1
+                
+                if quality_counts:
+                    st.markdown("#### Most Common Quality Issues:")
+                    sorted_issues = sorted(quality_counts.items(), key=lambda x: x[1], reverse=True)
+                    for issue, count in sorted_issues[:5]:
+                        percentage = (count / len(results)) * 100
+                        st.warning(f"🔸 {issue} (Found in {percentage:.1f}% of readings)")
+                
+                # Show detailed results in expandable section
+                with st.expander("View Detailed Results"):
+                    st.dataframe(df_results)
+                    
+                # Download detailed report
+                report_data = {
+                    'summary': {
+                        'total_readings': len(results),
+                        'failure_count': failures,
+                        'avg_quality_score': avg_quality,
+                        'avg_confidence': avg_prob
+                    },
+                    'quality_issues': quality_counts,
+                    'detailed_results': results
                 }
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Error during prediction: {str(e)}")
+                
+                report_json = json.dumps(report_data, indent=2)
+                st.download_button(
+                    "📥 Download Detailed Analysis Report",
+                    report_json,
+                    "batch_analysis_report.json",
+                    "application/json"
+                )
+                
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
 
-
-def format_ai_explanation(explanation_text):
-    """Format AI explanation with better styling and structure"""
-    lines = explanation_text.split('\n')
-    formatted_lines = []
+    left_col, right_col = st.columns([1.1, 0.9], gap="large")
     
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Format section headers
-        if line.startswith('DETAILED SENSOR ANALYSIS'):
-            formatted_lines.append('<div style="color: #ff6b35; font-weight: 700; font-size: 1.1rem; margin: 1.5rem 0 1rem 0;">🔍 DETAILED SENSOR ANALYSIS</div>')
-        elif line.startswith('CRITICAL ISSUES IDENTIFIED'):
-            formatted_lines.append('<div style="color: #e74c3c; font-weight: 700; font-size: 1.1rem; margin: 1.5rem 0 1rem 0;">🚨 CRITICAL ISSUES IDENTIFIED</div>')
-        elif line.startswith('PRIMARY FACTOR'):
-            formatted_lines.append('<div style="color: #fdcb6e; font-weight: 700; font-size: 1.1rem; margin: 1.5rem 0 1rem 0;">📈 PRIMARY FACTOR</div>')
-        elif line.startswith('MAINTENANCE RECOMMENDATIONS'):
-            formatted_lines.append('<div style="color: #27ae60; font-weight: 700; font-size: 1.1rem; margin: 1.5rem 0 1rem 0;">🛠️ MAINTENANCE RECOMMENDATIONS</div>')
-        elif line.startswith('SYSTEM STATUS'):
-            formatted_lines.append('<div style="color: #00b894; font-weight: 700; font-size: 1.1rem; margin: 1.5rem 0 1rem 0;">✅ SYSTEM STATUS</div>')
-        elif line.startswith('ATTENTION REQUIRED'):
-            formatted_lines.append(f'<div style="background: rgba(253, 203, 110, 0.2); padding: 1rem; border-radius: 10px; border-left: 4px solid #fdcb6e; margin: 1rem 0; color: #fff3cd;">⚠️ {line}</div>')
-        elif line.startswith('CRITICAL ALERT'):
-            formatted_lines.append(f'<div style="background: rgba(231, 76, 60, 0.2); padding: 1rem; border-radius: 10px; border-left: 4px solid #e74c3c; margin: 1rem 0; color: #ffe8e8;">🚨 {line}</div>')
+    with left_col:
+        st.markdown('<div class="section-header">⚡ Sensor Configuration Panel</div>', unsafe_allow_html=True)
         
-        # Format numbered sensor items
-        elif line and line[0].isdigit() and '. ' in line:
-            formatted_lines.append(f'<div class="sensor-item"><strong style="color: #667eea;">{line}</strong></div>')
+        # Input method toggle
+        input_method = st.radio(
+            "🎛️ Input Method:",
+            ["🎚️ Sliders/Switches", "⌨️ Number Input"],
+            horizontal=True
+        )
         
-        # Format impact lines
-        elif line.startswith('Impact:'):
-            formatted_lines.append(f'<div class="impact-text" style="margin: 1.5rem 0 1rem 0;">📊 {line}</div>')
+        # Sensor inputs (keeping your existing structure)
+        analog_sensors = [
+            ("TP2", "📊 TP2 (bar)", -0.1, 10.0, 0.0),
+            ("TP3", "📊 TP3 (bar)", 0.0, 15.0, 9.0),
+            ("H1", "📊 H1 (bar)", -0.1, 10.0, 0.0),
+            ("DV_pressure", "📊 DV Pressure (bar)", -0.1, 3.0, 0.0),
+            ("Reservoirs", "📊 Reservoirs (bar)", 0.0, 15.0, 9.0),
+            ("Oil_temperature", "📊 Oil Temperature (°C)", 20.0, 80.0, 53.0),
+            ("Motor_current", "📊 Motor Current (A)", 0.0, 10.0, 4.0)
+        ]
         
-        # Format recommendations
-        elif line.startswith('URGENT:') or line.startswith('CRITICAL:') or line.startswith('IMMEDIATE ACTION:') or line.startswith('SAFETY ALERT:'):
-            formatted_lines.append(f'<div class="critical-issue" style="margin: 1.5rem 0 1rem 0;">🚨 {line}</div>')
-        elif line.startswith('MAINTAIN:') or line.startswith('OPTIMAL:') or line.startswith('MONITOR:'):
-            formatted_lines.append(f'<div class="recommendation" style="margin: 1.5rem 0 1rem 0;">✅ {line}</div>')
+        digital_sensors = [
+            ("COMP", "🔢 COMP", "Air intake valve active"),
+            ("DV_eletric", "🔢 DV Electric", "Outlet valve active"),
+            ("Towers", "🔢 Towers", "Tower 2 in operation"),
+            ("MPG", "🔢 MPG", "Compressor start signal"),
+            ("LPS", "🔢 LPS", "Low pressure detected"),
+            ("Pressure_switch", "🔢 Pressure Switch", "Tower discharge detected"),
+            ("Oil_level", "🔢 Oil Level", "Low oil level detected"),
+            ("Caudal_impulses", "🔢 Caudal Impulses", "Air flow detected")
+        ]
         
-        # Regular text
-        else:
-            if line:
-                formatted_lines.append(f'<div style="margin: 0.5rem 0; line-height: 1.6; color: #e8e8f0;">{line}</div>')
-    
-    return ''.join(formatted_lines)
-
-# =========================
-# Results Panel (Right Side)
-# =========================
-with right_col:
-    st.markdown('<div class="section-header">📊 Diagnostic Results & Analysis</div>', unsafe_allow_html=True)
-    
-    if not st.session_state.prediction_made:
-        # No prediction yet
-        st.markdown("""
-        <div class="status-waiting">
-            <h3>⏳ No Prediction Yet</h3>
-            <p style="margin: 0; opacity: 0.9;">Configure sensors and run diagnostic analysis to view results</p>
-        </div>
-        """, unsafe_allow_html=True)
+        sensor_values = {}
         
-        # Show current sensor summary
-        st.markdown('<div class="section-header">📋 Current Sensor Summary</div>', unsafe_allow_html=True)
+        # Analog sensors
+        st.markdown('<div class="sensor-section"><div class="section-header" style="font-size: 1.2rem;">📊 Analog Sensors</div>', unsafe_allow_html=True)
+        analog_col1, analog_col2 = st.columns(2)
+        for i, (sensor_key, label, min_val, max_val, default) in enumerate(analog_sensors):
+            col = analog_col1 if i % 2 == 0 else analog_col2
+            with col:
+                if input_method == "🎚️ Sliders/Switches":
+                    sensor_values[sensor_key] = st.slider(label, min_val, max_val, default, 0.01 if max_val <= 1 else 0.1, key=f"{sensor_key}_slider")
+                else:
+                    sensor_values[sensor_key] = st.number_input(label, min_val, max_val, default, 0.01 if max_val <= 1 else 0.1, key=f"{sensor_key}_input")
+        st.markdown("</div>", unsafe_allow_html=True)
         
-        # Create summary metrics
-        col_metric1, col_metric2 = st.columns(2)
+        # Digital sensors
+        st.markdown('<div class="sensor-section"><div class="section-header" style="font-size: 1.2rem;">🔢 Digital Sensors</div>', unsafe_allow_html=True)
+        digital_col1, digital_col2 = st.columns(2)
+        for i, (sensor_key, label, description) in enumerate(digital_sensors):
+            col = digital_col1 if i % 2 == 0 else digital_col2
+            with col:
+                if input_method == "🎚️ Sliders/Switches":
+                    sensor_values[sensor_key] = 1 if st.checkbox(f"{label}: {description}", key=f"{sensor_key}_switch") else 0
+                else:
+                    sensor_values[sensor_key] = st.selectbox(f"{label}: {description}", options=[0, 1], index=0, key=f"{sensor_key}_select")
+        st.markdown("</div>", unsafe_allow_html=True)
         
-        with col_metric1:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem;">📊 Analog Sensors</div>
-                <div style="opacity: 0.8;">TP2: {sensor_values.get('TP2', 0):.3f} bar</div>
-                <div style="opacity: 0.8;">TP3: {sensor_values.get('TP3', 0):.3f} bar</div>
-                <div style="opacity: 0.8;">H1: {sensor_values.get('H1', 0):.3f} bar</div>
-                <div style="opacity: 0.8;">DV Pressure: {sensor_values.get('DV_pressure', 0):.3f} bar</div>
-                <div style="opacity: 0.8;">Oil Temp: {sensor_values.get('Oil_temperature', 0):.1f}°C</div>
-                <div style="opacity: 0.8;">Motor Current: {sensor_values.get('Motor_current', 0):.2f}A</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-        with col_metric2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem;">🔢 Digital Sensors Status</div>
-                <div style="opacity: 0.8;">COMP: {'🟢 Active' if sensor_values.get('COMP', 0) else '🔴 Inactive'}</div>
-                <div style="opacity: 0.8;">DV Electric: {'🟢 Active' if sensor_values.get('DV_eletric', 0) else '🔴 Inactive'}</div>
-                <div style="opacity: 0.8;">Towers: {'🟢 Tower 2' if sensor_values.get('Towers', 0) else '🔴 Tower 1'}</div>
-                <div style="opacity: 0.8;">MPG: {'🟢 Active' if sensor_values.get('MPG', 0) else '🔴 Inactive'}</div>
-                <div style="opacity: 0.8;">LPS: {'🟡 Low Pressure' if sensor_values.get('LPS', 0) else '🟢 Normal'}</div>
-                <div style="opacity: 0.8;">Oil Level: {'🔴 Low' if sensor_values.get('Oil_level', 0) else '🟢 Normal'}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem;">⚙️ System Health Overview</div>
-            <div style="opacity: 0.8;">Analog Activity Score: {analog_sum:.1f}</div>
-            <div style="opacity: 0.8;">Digital Systems Active: {digital_sum}/8</div>
-            <div style="opacity: 0.8;">Overall Health: {(st.session_state.sensor_sum/100*100):.1f}%</div>
-            <div style="opacity: 0.8;">APU Status: <strong>{apu_status}</strong></div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    else:
-        # Show prediction results
-        result = st.session_state.prediction_result
-        
-        # Status display
-        if result['pred_label'] == 'NORMAL':
-            st.markdown(f"""
-            <div class="status-normal">
-                <h3>✅ SYSTEM STATUS: NORMAL OPERATION</h3>
-                <p style="margin: 0; font-size: 1.3rem; opacity: 0.9;">Confidence: {float(result['probability'][0]):.1%}</p>
-                <div style="margin-top: 1rem; font-size: 0.9rem; opacity: 0.8;">All systems operating within normal parameters</div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div class="status-failure">
-                <h3>⚠️ SYSTEM STATUS: FAILURE RISK DETECTED</h3>
-                <p style="margin: 0; font-size: 1.3rem; opacity: 0.9;">Confidence: {float(result['probability'][0]):.1%}</p>
-                <div style="margin-top: 1rem; font-size: 0.9rem; opacity: 0.8;">Immediate attention required - potential system failure predicted</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # Enhanced AI Explanation with proper formatting
-        st.markdown('<div class="section-header">🧠 AI Analysis Explanation</div>', unsafe_allow_html=True)
-        
-        explanation_text = result['explanation_text']
-        explanation_text = explanation_text.split(":", 1)[1].strip() if explanation_text.startswith("Row 0:") else explanation_text
-        
-        # Format the explanation with enhanced styling
-        formatted_explanation = format_ai_explanation(explanation_text)
-        st.markdown(f"""
-        <div class="ai-explanation">
-            <div class="explanation-header">🤖 Detailed AI Analysis Report</div>
-            <div class="explanation-text">{formatted_explanation}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Current Sensor Values Summary
-        st.markdown('<div class="section-header"></div>', unsafe_allow_html=True)
-        
-        col_anal1, col_anal2 = st.columns(2)
-        
-      
-        # SHAP Visualization
-        st.markdown('<div class="section-header">📈 Feature Impact Analysis (SHAP)</div>', unsafe_allow_html=True)
-        if os.path.exists(result['shap_image_path']):
-            st.image(result['shap_image_path'], caption="SHAP Analysis: Most Influential Factors in Prediction", use_container_width=True)
-        else:
-            st.markdown("""
-            <div class="card" style="text-align: center; padding: 3rem;">
-                <div style="font-size: 2rem; margin-bottom: 1rem;">📊</div>
-                <div style="color: #fdcb6e; font-weight: 600;">SHAP Visualization Unavailable</div>
-                <div style="color: #a0a0b0; margin-top: 0.5rem; font-size: 0.9rem;">Ensure the SHAP image path is correct</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Action buttons including download
-        col_btn1, col_btn2, col_btn3 = st.columns(3)
-        
+        # Action buttons
+        col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            if st.button("🔄 Reset Analysis", use_container_width=True):
-                st.session_state.prediction_made = False
-                st.session_state.prediction_result = None
-                st.rerun()
-        
+            run_diagnostic = st.button("🔍 Run Diagnostic Analysis", use_container_width=True, type="primary")
         with col_btn2:
-            if st.button("📊 Re-run", use_container_width=True):
-                st.session_state.prediction_made = False
-                st.rerun()
-        
-        with col_btn3:
-            # Download report button
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            report_content = generate_detailed_report(result, result['sensor_values'], timestamp)
-            filename = f"APU_Health_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            save_prediction = st.button("💾 Save Prediction", use_container_width=True, disabled=not st.session_state.get('prediction_made', False))
+    
+    with right_col:
+        # Add Sensor Reference Guide at the top
+        with st.expander("📋 Sensor Reference Guide", expanded=False):
+            show_ranges = st.toggle("Show Operating Ranges", value=False)
             
-            st.download_button(
-                label="📥 Download Report",
-                data=report_content,
-                file_name=filename,
-                mime="text/plain",
-                use_container_width=True,
-                key="download_report"
-            )
+            st.markdown("""
+            <style>
+            .sensor-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 10px 0;
+            }
+            .sensor-table th {
+                background: rgba(102, 126, 234, 0.1);
+                padding: 8px;
+                text-align: left;
+                border-bottom: 2px solid rgba(102, 126, 234, 0.2);
+            }
+            .sensor-table td {
+                padding: 6px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            .sensor-range {
+                color: #94a3b8;
+                font-size: 0.9em;
+            }
+            </style>
+            """, unsafe_allow_html=True)
 
-# =========================
+            # Organize sensors by type
+            st.markdown("#### Analog Sensors")
+            if show_ranges:
+                st.markdown("""
+                <table class="sensor-table">
+                    <tr>
+                        <th>Sensor Code</th>
+                        <th>Description</th>
+                        <th>Normal Range</th>
+                        <th>Critical Range</th>
+                    </tr>
+                    <tr>
+                        <td><strong>TP2</strong></td>
+                        <td>Compressor pressure</td>
+                        <td><span class="sensor-range">6.0 - 10.0 bar</span></td>
+                        <td><span class="sensor-range">2.0 - 9.5 bar</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>TP3</strong></td>
+                        <td>Pneumatic panel pressure</td>
+                        <td><span class="sensor-range">7.0 - 11.0 bar</span></td>
+                        <td><span class="sensor-range">6.0 - 10.0 bar</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>H1</strong></td>
+                        <td>Separator pressure drop</td>
+                        <td><span class="sensor-range">0.1 - 2.0 bar</span></td>
+                        <td><span class="sensor-range">0.05 - 1.8 bar</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>DV_pressure</strong></td>
+                        <td>Towers discharge drop</td>
+                        <td><span class="sensor-range">0.0 - 2.5 bar</span></td>
+                        <td><span class="sensor-range">-0.1 - 2.0 bar</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Reservoirs</strong></td>
+                        <td>Downstream pressure</td>
+                        <td><span class="sensor-range">7.0 - 11.0 bar</span></td>
+                        <td><span class="sensor-range">6.5 - 10.5 bar</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Oil_temperature</strong></td>
+                        <td>Oil temperature</td>
+                        <td><span class="sensor-range">40.0 - 65.0 °C</span></td>
+                        <td><span class="sensor-range">25.0 - 70.0 °C</span></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Motor_current</strong></td>
+                        <td>Motor phase current</td>
+                        <td><span class="sensor-range">0.0 - 9.0 A</span></td>
+                        <td><span class="sensor-range">0.5 - 8.5 A</span></td>
+                    </tr>
+                </table>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <table class="sensor-table">
+                    <tr>
+                        <th>Sensor Code</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr><td><strong>TP2</strong></td><td>Compressor pressure (bar)</td></tr>
+                    <tr><td><strong>TP3</strong></td><td>Pneumatic panel pressure (bar)</td></tr>
+                    <tr><td><strong>H1</strong></td><td>Separator pressure drop (bar)</td></tr>
+                    <tr><td><strong>DV_pressure</strong></td><td>Towers discharge drop (bar)</td></tr>
+                    <tr><td><strong>Reservoirs</strong></td><td>Downstream pressure (bar)</td></tr>
+                    <tr><td><strong>Oil_temperature</strong></td><td>Oil temperature (°C)</td></tr>
+                    <tr><td><strong>Motor_current</strong></td><td>Motor phase current (A)</td></tr>
+                </table>
+                """, unsafe_allow_html=True)
+
+            st.markdown("#### Digital Sensors")
+            st.markdown("""
+            <table class="sensor-table">
+                <tr>
+                    <th>Sensor Code</th>
+                    <th>Description</th>
+                </tr>
+                <tr><td><strong>COMP</strong></td><td>Air intake valve</td></tr>
+                <tr><td><strong>DV_eletric</strong></td><td>Compressor outlet valve</td></tr>
+                <tr><td><strong>Towers</strong></td><td>Tower operation selector</td></tr>
+                <tr><td><strong>MPG</strong></td><td>Compressor start signal</td></tr>
+                <tr><td><strong>LPS</strong></td><td>Low pressure sensor</td></tr>
+                <tr><td><strong>Pressure_switch</strong></td><td>Towers discharge detector</td></tr>
+                <tr><td><strong>Oil_level</strong></td><td>Oil level detector</td></tr>
+                <tr><td><strong>Caudal_impulses</strong></td><td>Air flow pulse counter</td></tr>
+            </table>
+            """, unsafe_allow_html=True)
+
+        # Generate data quality report first
+        data_quality_report = st.session_state.sensor_validator.generate_data_quality_report(
+            sensor_values, role)
+        
+        # Show prediction results if available
+        if st.session_state.prediction_made and st.session_state.prediction_result is not None:
+            result = st.session_state.prediction_result
+            
+            # Show prediction status with enhanced visibility
+            is_normal = result.get('pred_label') == 'NORMAL'
+            status_color = "#10b981" if is_normal else "#ef4444"
+            glow_color = "0, 255, 0" if is_normal else "255, 0, 0"
+            
+            animation_css = """
+                <style>
+                    @keyframes pulse {
+                        0% { transform: scale(1); }
+                        50% { transform: scale(1.02); }
+                        100% { transform: scale(1); }
+                    }
+                    @keyframes blink {
+                        0% { opacity: 1; }
+                        50% { opacity: 0.6; }
+                        100% { opacity: 1; }
+                    }
+                </style>
+            """
+            
+            status_html = f"""
+                <div style="position: relative; margin: 20px 0;">
+                    <div style="
+                        background: linear-gradient(145deg, {status_color}22, {status_color}44);
+                        border: 2px solid {status_color};
+                        border-radius: 15px;
+                        padding: 20px;
+                        box-shadow: 0 0 30px rgba({glow_color}, 0.3);
+                        animation: pulse 2s infinite;
+                    ">
+                        <div style="display: flex; align-items: center; gap: 15px;">
+                            <div style="
+                                width: 20px;
+                                height: 20px;
+                                background: {status_color};
+                                border-radius: 50%;
+                                animation: blink 1s infinite;
+                            "></div>
+                            <div>
+                                <h2 style="margin: 0; color: {status_color}; font-size: 28px;">
+                                    {result.get('pred_label')}
+                                </h2>
+                                <p style="margin: 5px 0 0 0; color: #94a3b8;">
+                                    Confidence: {float(result['probability'][0]):.1%}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            """
+            
+            st.markdown(animation_css + status_html, unsafe_allow_html=True)
+
+            # Display the detailed AI explanation (same for all roles)
+            st.markdown("### 🧠 AI Analysis Explanation")
+            
+            # Create an expandable section for the full detailed analysis
+            with st.expander("🤖 Detailed AI Analysis Report", expanded=True):
+                st.markdown(format_explanation_text(result['explanation_text']), unsafe_allow_html=True)
+            
+            # Show SHAP visualization
+            st.markdown("### 📈 Feature Impact Analysis (SHAP)")
+            if os.path.exists(result['shap_image_path']):
+                st.image(result['shap_image_path'], use_container_width=True, 
+                        caption="SHAP Analysis: Most Influential Factors in Prediction")
+            
+            # Role-specific additional insights
+            if role == "plant_manager":
+                with st.expander("📊 Executive Summary - Data Quality"):
+                    st.info(f"""
+                    - Data Quality Score: {data_quality_report['data_quality_score']:.1f}/100
+                    - Reliability Assessment: {'High confidence' if data_quality_report['data_quality_score'] > 80 else 'Requires attention'}
+                    """)
+                    
+                    if data_quality_report['alerts']:
+                        st.warning("⚠️ Additional Data Quality Alerts")
+                        for alert in data_quality_report['alerts']:
+                            if alert['status'] == 'critical':
+                                st.markdown(f"🔴 {alert['message']}")
+
+            elif role == "maintenance_engineer":
+                with st.expander("🔧 Sensor Range Check"):
+                    for param, value in result['sensor_values'].items():
+                        if param in data_quality_report.get('sensor_ranges', {}):
+                            ranges = data_quality_report['sensor_ranges'][param]
+                            if value > ranges.get('critical_high', float('inf')):
+                                st.error(f"**{param}**: {value:.2f} {ranges.get('unit', '')} - CRITICAL HIGH")
+                            elif value < ranges.get('critical_low', float('-inf')):
+                                st.error(f"**{param}**: {value:.2f} {ranges.get('unit', '')} - CRITICAL LOW")
+
+            else:  # ml_engineer
+                with st.expander("🤖 Model Performance Metrics"):
+                    st.info(f"""
+                    - Prediction Confidence: {float(result['probability'][0]):.1%}
+                    - Data Quality Score: {data_quality_report['data_quality_score']:.1f}/100
+                    - Feature Stability: {'Stable' if data_quality_report['data_quality_score'] > 80 else 'Requires Investigation'}
+                    - Model Type: XGBoost Classifier with SHAP Explainability
+                    """)
+
+            # Show recommendations based on role
+            st.markdown("### 📋 Recommendations")
+            if role == "plant_manager":
+                for alert in data_quality_report['alerts']:
+                    if alert['status'] == 'critical':
+                        st.error(f"🚨 {alert['message']}")
+                    else:
+                        st.warning(f"⚠️ {alert['message']}")
+                    for rec in alert['recommendations']:
+                        st.info(f"➡️ {rec}")
+                        
+            elif role == "maintenance_engineer":
+                # Extract maintenance-specific recommendations
+                maintenance_recs = [rec for alert in data_quality_report['alerts'] 
+                                 for rec in alert['recommendations'] 
+                                 if 'calibrate' in rec.lower() or 'inspect' in rec.lower()]
+                for rec in maintenance_recs:
+                    st.info(f"🔧 {rec}")
+                    
+            else:  # ml_engineer
+                # Show model-specific recommendations
+                if data_quality_report['data_quality_score'] < 80:
+                    st.warning("⚠️ Data quality issues may affect model performance")
+                    st.info("🔍 Recommend investigating feature distributions and potential sensor calibration issues")
+
+        # Prediction results section
+        if run_diagnostic:
+            input_df = pd.DataFrame([sensor_values])
+            
+            with st.spinner("🔬 Analyzing sensor data..."):
+                try:
+                    prediction, probability, explanations = predict_with_explanation(input_df)
+                    explanation_text, shap_image_path = explanations[0]
+                    pred_label = 'FAILURE' if prediction[0] == 1 else 'NORMAL'
+                    
+                    st.session_state.prediction_made = True
+                    st.session_state.prediction_result = {
+                        'pred_label': pred_label,
+                        'probability': probability,
+                        'explanation_text': explanation_text,
+                        'shap_image_path': shap_image_path,
+                        'sensor_values': sensor_values,
+                        'prediction': prediction[0],
+                        'data_quality_score': data_quality_report['data_quality_score'],
+                        'role': role,
+                        'alerts': data_quality_report['alerts']
+                    }
+                    
+                    # Rerun to update the display
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    st.session_state.prediction_made = False
+                    st.session_state.prediction_result = None
+
+        # Save prediction button action
+        if save_prediction and st.session_state.get('prediction_result'):
+            result = st.session_state.prediction_result.copy()  # Make a copy
+            
+            # Convert numpy types to regular Python types
+            result['prediction'] = int(result['prediction'])
+            result['probability'] = [float(p) for p in result['probability']]
+            result['data_quality_score'] = float(result['data_quality_score'])
+            
+            # Add timestamp if missing
+            if 'timestamp' not in result:
+                result['timestamp'] = datetime.now().isoformat()
+            
+            success = st.session_state.storage_manager.save_prediction(result)
+            if success:
+                st.success("✅ Prediction saved successfully!")
+                # Clear the prediction state to prevent duplicate saves
+                st.session_state.prediction_made = False
+            else:
+                st.error("❌ Error saving prediction")
+
+# ========== PAGE 2: TREND ANALYSIS ==========
+elif page == "Trend Analysis":
+    st.markdown('<div class="section-header">📈 Historical Trend Analysis</div>', unsafe_allow_html=True)
+    
+    # Date range selector
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start Date", datetime.now() - timedelta(days=7))
+    with col2:
+        end_date = st.date_input("End Date", datetime.now())
+    
+    # Time range selector for within-day analysis
+    time_analysis = st.radio("Time Analysis", ["Daily Overview"])
+    if time_analysis == "Within Day Analysis":
+        # Use st.time_input for picking start and end time
+        tcol1, tcol2 = st.columns(2)
+        with tcol1:
+            start_time = st.time_input("Start Time", value=datetime.strptime("00:00", "%H:%M").time())
+        with tcol2:
+            end_time = st.time_input("End Time", value=datetime.strptime("23:59", "%H:%M").time())
+    else:
+        start_time = None
+        end_time = None
+
+    # Parameter selection for trends
+    st.markdown("### 📊 Parameter Selection")
+    parameters = st.multiselect(
+        "Select parameters to analyze:",
+        ['TP2', 'TP3', 'H1', 'DV_pressure', 'Reservoirs', 
+         'Oil_temperature', 'Motor_current'],
+        default=['TP2', 'TP3']
+    )
+    
+    # Get trend analysis with filters
+    trend_analysis = st.session_state.storage_manager.get_trend_analysis(
+        role=role,
+        start_date=start_date,
+        end_date=end_date,
+        parameters=parameters,
+        time_analysis=time_analysis,
+        start_time=start_time if time_analysis == "Within Day Analysis" else None,
+        end_time=end_time if time_analysis == "Within Day Analysis" else None
+    )
+
+    # Display trends
+    if trend_analysis['status'] == 'no_data':
+        st.warning("No data available for the selected period.")
+    else:
+        # Summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Readings", trend_analysis['total_predictions'])
+        with col2:
+            st.metric("Failure Events", trend_analysis['failure_count'])
+        with col3:
+            st.metric("Failure Rate", f"{trend_analysis['failure_rate']*100:.1f}%")
+        with col4:
+            st.metric("Trend", trend_analysis['trend_direction'].title())
+        
+        # Parameter trends
+        st.plotly_chart(trend_analysis['parameter_plot'], use_container_width=True)
+        
+        # Correlation matrix
+        st.markdown("### 📊 Parameter Correlations")
+        st.plotly_chart(trend_analysis['correlation_plot'], use_container_width=True)
+        
+        # Role-specific insights
+        st.markdown(f"### 💡 Key Insights for {role.replace('_', ' ').title()}")
+        for insight in trend_analysis['role_specific_insights']:
+            if insight.startswith('CRITICAL'):
+                st.error(insight)
+            elif insight.startswith('WARNING'):
+                st.warning(insight)
+            else:
+                st.info(insight)
+
+
 # Footer
-# =========================
 st.markdown("<br><br>", unsafe_allow_html=True)
 st.markdown("""
-<div style="text-align: center; padding: 2.5rem; background: rgba(15, 15, 35, 0.95); border-radius: 25px; margin-top: 2rem; backdrop-filter: blur(20px); border: 1px solid rgba(102, 126, 234, 0.2); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);">
-    <div style="background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem;">
-        Metro Train APU Health Monitor v2.0 🚀
+<div style="text-align: center; padding: 2rem; background: rgba(15, 15, 35, 0.95); border-radius: 25px;">
+    <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+        Metro Train APU Health Monitor Pro v3.0 🚀
     </div>
     <div style="color: #a0a0b0; font-size: 0.9rem;">
-        Powered by Explainable AI & Advanced Machine Learning<br>
+        Powered by Explainable AI, Real-Time Validation & Predictive Analytics<br>
         <span style="color: #667eea;">Copyright © 2025 Odubiyi Ifeoluwa Antonia</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
+
