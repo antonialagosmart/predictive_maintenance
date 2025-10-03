@@ -124,6 +124,35 @@ dark_premium_css = """
     min-height: 100vh;
 }
 
+/* Add these new classes */
+.status-normal {
+    background: green;
+    border: 2px solid rgba(16, 185, 129, 0.5);
+    border-radius: 15px;
+    padding: 25px;
+    margin: 20px 0;
+    box-shadow: 0 0 30px rgba(16, 185, 129, 0.2);
+    backdrop-filter: blur(10px);
+    animation: pulse 2s infinite;
+}
+
+.status-failure {
+    background: red;
+    border: 2px solid rgba(239, 68, 68, 0.5);
+    border-radius: 15px;
+    padding: 25px;
+    margin: 20px 0;
+    box-shadow: 0 0 30px rgba(239, 68, 68, 0.2);
+    backdrop-filter: blur(10px);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+    100% { transform: scale(1); }
+}
+
 /* All your existing CSS styles remain the same */
 .main-header {
     background: rgba(15, 15, 35, 0.95);
@@ -635,58 +664,31 @@ if page == "Live Diagnostics":
         if st.session_state.prediction_made and st.session_state.prediction_result is not None:
             result = st.session_state.prediction_result
             
-            # Show prediction status with enhanced visibility
-            is_normal = result.get('pred_label') == 'NORMAL'
-            status_color = "#10b981" if is_normal else "#ef4444"
-            glow_color = "0, 255, 0" if is_normal else "255, 0, 0"
-            
-            animation_css = """
-                <style>
-                    @keyframes pulse {
-                        0% { transform: scale(1); }
-                        50% { transform: scale(1.02); }
-                        100% { transform: scale(1); }
-                    }
-                    @keyframes blink {
-                        0% { opacity: 1; }
-                        50% { opacity: 0.6; }
-                        100% { opacity: 1; }
-                    }
-                </style>
-            """
-            
-            status_html = f"""
-                <div style="position: relative; margin: 20px 0;">
-                    <div style="
-                        background: linear-gradient(145deg, {status_color}22, {status_color}44);
-                        border: 2px solid {status_color};
-                        border-radius: 15px;
-                        padding: 20px;
-                        box-shadow: 0 0 30px rgba({glow_color}, 0.3);
-                        animation: pulse 2s infinite;
-                    ">
-                        <div style="display: flex; align-items: center; gap: 15px;">
-                            <div style="
-                                width: 20px;
-                                height: 20px;
-                                background: {status_color};
-                                border-radius: 50%;
-                                animation: blink 1s infinite;
-                            "></div>
-                            <div>
-                                <h2 style="margin: 0; color: {status_color}; font-size: 28px;">
-                                    {result.get('pred_label')}
-                                </h2>
-                                <p style="margin: 5px 0 0 0; color: #94a3b8;">
-                                    Confidence: {float(result['probability'][0]):.1%}
-                                </p>
-                            </div>
-                        </div>
+            # Status display with full-color cards
+            if result.get('pred_label') == 'NORMAL':
+                st.markdown(f"""
+                <div class="status-normal">
+                    <h3 style="color: white; margin: 0;">✅ SYSTEM STATUS: NORMAL OPERATION</h3>
+                    <p style="margin: 0; font-size: 1.3rem; color: white;">
+                        Confidence: {float(result['probability'][0]):.1%}
+                    </p>
+                    <div style="margin-top: 1rem; font-size: 0.9rem; color: white;">
+                        All systems operating within normal parameters
                     </div>
                 </div>
-            """
-            
-            st.markdown(animation_css + status_html, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="status-failure">
+                    <h3 style="color: white; margin: 0;">⚠️ SYSTEM STATUS: FAILURE RISK DETECTED</h3>
+                    <p style="margin: 0; font-size: 1.3rem; color: white;">
+                        Confidence: {float(result['probability'][0]):.1%}
+                    </p>
+                    <div style="margin-top: 1rem; font-size: 0.9rem; color: white;">
+                        Immediate attention required - potential system failure predicted
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
             # Display the detailed AI explanation (same for all roles)
             st.markdown("### 🧠 AI Analysis Explanation")
