@@ -236,7 +236,7 @@ with col1:
     if os.path.exists("machine.jpg"):
         try:
             image = Image.open("machine.jpg")
-            st.image(image, width=120, caption="APU Unit")
+            st.image(image, width=120)
         except Exception as e:
             print(f"Error loading image: {e}")
             st.markdown("🚇", unsafe_allow_html=True)
