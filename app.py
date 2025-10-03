@@ -749,17 +749,91 @@ if page == "Live Diagnostics":
                         
             elif role == "maintenance_engineer":
                 # Extract maintenance-specific recommendations
-                maintenance_recs = [rec for alert in data_quality_report['alerts'] 
-                                 for rec in alert['recommendations'] 
-                                 if 'calibrate' in rec.lower() or 'inspect' in rec.lower()]
-                for rec in maintenance_recs:
-                    st.info(f"🔧 {rec}")
-                    
-            else:  # ml_engineer
-                # Show model-specific recommendations
-                if data_quality_report['data_quality_score'] < 80:
-                    st.warning("⚠️ Data quality issues may affect model performance")
-                    st.info("🔍 Recommend investigating feature distributions and potential sensor calibration issues")
+                st.markdown("#### 🛠️ Maintenance Action Items")
+                
+                # First show any critical issues
+                critical_issues = [
+                    alert for alert in data_quality_report['alerts'] 
+                    if alert['status'] == 'critical'
+                ]
+                if critical_issues:
+                    st.error("🚨 Critical Issues Requiring Immediate Attention:")
+                    for issue in critical_issues:
+                        st.error(f"• {issue['message']}")
+                        if 'recommendations' in issue:
+                            for rec in issue['recommendations']:
+                                st.warning(f"  ↳ Action: {rec}")
+        
+                # Show regular maintenance recommendations
+                st.markdown("##### Regular Maintenance Tasks:")
+                
+                # Get sensor-specific recommendations
+                for param, value in result['sensor_values'].items():
+                    if param in data_quality_report.get('sensor_ranges', {}):
+                        ranges = data_quality_report['sensor_ranges'][param]
+                        if value > ranges.get('critical_high', float('inf')):
+                            st.error(f"**{param}**: {value:.2f} {ranges.get('unit', '')} - CRITICAL HIGH")
+                            st.info(f"🔧 Recommended Actions for {param}:")
+                            st.info("""
+                                1. Immediately check pressure relief valves
+                                2. Inspect for blockages or restrictions
+                                3. Verify sensor calibration
+                                4. Check for mechanical wear or damage
+                                """)
+                        elif value < ranges.get('critical_low', float('-inf')):
+                            st.error(f"**{param}**: {value:.2f} {ranges.get('unit', '')} - CRITICAL LOW")
+                            st.info(f"🔧 Recommended Actions for {param}:")
+                            st.info("""
+                                1. Check for leaks or system bypasses
+                                2. Verify power supply to components
+                                3. Inspect for mechanical failures
+                                4. Validate sensor connections
+                                """)
+                        elif value > ranges.get('max', float('inf')):
+                            st.warning(f"**{param}**: {value:.2f} {ranges.get('unit', '')} - Above normal range")
+                            st.info(f"🔧 Preventive Actions for {param}:")
+                            st.info("""
+                                1. Schedule inspection within 24 hours
+                                2. Monitor trend for further deterioration
+                                3. Prepare replacement parts if needed
+                                """)
+        
+                # Add general maintenance recommendations based on system state
+                if result.get('pred_label') == 'FAILURE':
+                    st.markdown("##### 🛠️ General Maintenance Checklist:")
+                    st.info("""
+                        1. Complete System Inspection:
+                           - Check all pressure seals and gaskets
+                           - Inspect electrical connections
+                           - Verify oil levels and quality
+                           - Test safety shutdown systems
+                        
+                        2. Preventive Maintenance:
+                           - Clean/replace air filters
+                           - Check belt tensions
+                           - Lubricate bearings
+                           - Verify sensor calibrations
+                        
+                        3. Documentation:
+                           - Record all measurements
+                           - Document repair actions
+                           - Update maintenance logs
+                           - Schedule follow-up inspection
+                        """)
+                else:
+                    st.markdown("##### 🔍 Preventive Maintenance Recommendations:")
+                    st.info("""
+                        1. Routine Checks:
+                           - Monitor oil levels
+                           - Check for unusual noises
+                           - Record operating pressures
+                           - Inspect for leaks
+                        
+                        2. Scheduled Tasks:
+                           - Plan next maintenance window
+                           - Order replacement parts
+                           - Update maintenance records
+                        """)
 
         # Prediction results section
         if run_diagnostic:
